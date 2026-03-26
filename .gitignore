@@ -17,3 +17,13 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# Tauri
+dist
+dist-ssr
+*.local
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

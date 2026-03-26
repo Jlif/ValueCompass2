@@ -4,14 +4,15 @@
 
 ## 进行中
 
-- 🔄 技术架构设计文档编写（100%）
-  - Tauri + React + Python/AKTools 架构确定
-  - 数据存储策略：SQLite 存股票列表，K线实时拉取
+- 🔄 初始化 Tauri 项目结构（100%）
+  - 前端 React + TypeScript 环境配置完成
+  - Rust 后端依赖安装完成
+  - 项目基础结构就绪
 
 ## 待办
 
-- [ ] 初始化 Tauri 项目结构
-- [ ] 配置前端 React + TypeScript 环境
+- [x] 初始化 Tauri 项目结构
+- [x] 配置前端 React + TypeScript 环境
 - [ ] 编写 Python 服务打包脚本
 - [ ] 设计 SQLite 表结构并实现 Rust 端操作
 - [ ] 集成 AKTools HTTP 客户端
