@@ -48,12 +48,20 @@ impl PythonService {
         // 查找 aktools 可执行文件
         let executable = self.find_aktools_executable()?;
 
-        // 启动进程
+        // 启动进程（清除代理环境变量，避免影响东方财富 API 连接）
         let child = Command::new(&executable)
             .arg(format!("--port={}", self.port))
             .arg("--host=127.0.0.1")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
+            .env_remove("http_proxy")
+            .env_remove("HTTP_PROXY")
+            .env_remove("https_proxy")
+            .env_remove("HTTPS_PROXY")
+            .env_remove("all_proxy")
+            .env_remove("ALL_PROXY")
+            .env("NO_PROXY", "*")  // 禁用所有代理
+            .env("no_proxy", "*")
             .spawn()
             .map_err(|e| format!("Failed to start AKTools: {}", e))?;
 
@@ -89,20 +97,43 @@ impl PythonService {
 
     /// 查找 aktools 可执行文件
     fn find_aktools_executable(&self) -> Result<String, String> {
-        // 1. 首先查找打包目录
+        // 1. 首先查找 Tauri sidecar 路径 (externalBin)
         if let Ok(exe_path) = std::env::current_exe() {
             let exe_dir = exe_path.parent().unwrap_or_else(|| std::path::Path::new("."));
 
-            // 检查常见位置
-            let candidates = [
+            // Tauri sidecar 打包后的路径
+            let sidecar_candidates = [
+                // macOS: .app/Contents/MacOS/aktools
                 exe_dir.join("aktools"),
+                // Windows: 与 exe 同级
                 exe_dir.join("aktools.exe"),
-                exe_dir.join("python").join("aktools"),
-                exe_dir.join("python").join("aktools.exe"),
-                exe_dir.join("../Resources/python/aktools"),
+                // 开发时手动放置的路径
+                exe_dir.join("..").join("Resources").join("bin").join("aktools"),
+                exe_dir.join("bin").join("aktools"),
+                exe_dir.join("bin").join("aktools.exe"),
             ];
 
-            for candidate in &candidates {
+            for candidate in &sidecar_candidates {
+                if candidate.exists() {
+                    return Ok(candidate.to_string_lossy().to_string());
+                }
+            }
+
+            // 检查 bin/ 目录下的平台特定子目录
+            let platform_dir = if cfg!(target_os = "macos") {
+                "macos"
+            } else if cfg!(target_os = "windows") {
+                "windows"
+            } else {
+                "linux"
+            };
+
+            let platform_paths = [
+                exe_dir.join("bin").join(platform_dir).join("aktools"),
+                exe_dir.join("bin").join(platform_dir).join("aktools.exe"),
+            ];
+
+            for candidate in &platform_paths {
                 if candidate.exists() {
                     return Ok(candidate.to_string_lossy().to_string());
                 }
@@ -143,7 +174,7 @@ impl PythonService {
             }
         }
 
-        Err("AKTools executable not found. Please install aktools or ensure it's in PATH".to_string())
+        Err("AKTools executable not found. Please install aktools or run 'python build.py' in the python/ directory".to_string())
     }
 
     /// 等待服务就绪

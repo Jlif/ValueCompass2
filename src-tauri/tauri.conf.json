@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "vctemp",
+  "productName": "ValueCompass2",
   "version": "0.1.0",
-  "identifier": "com.jiangchen.vctemp",
+  "identifier": "com.jiangchen.valuecompass2",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,9 +12,11 @@
   "app": {
     "windows": [
       {
-        "title": "vctemp",
-        "width": 800,
-        "height": 600
+        "title": "ValueCompass2 - A股价值分析",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600
       }
     ],
     "security": {
@@ -30,6 +32,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "externalBin": [
+      "bin/aktools"
     ]
   }
 }

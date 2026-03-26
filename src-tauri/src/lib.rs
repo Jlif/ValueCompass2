@@ -110,11 +110,18 @@ async fn stop_python_service(state: State<'_, AppState>) -> Result<(), String> {
 /// 从 AKTools 同步股票列表
 #[tauri::command]
 async fn sync_stocks_from_aktools(state: State<'_, AppState>) -> Result<SyncResult, String> {
+    println!("Starting sync_stocks_from_aktools...");
     let port = state.python_service.get_port();
+    println!("Using port: {}", port);
     let client = AKToolsClient::new(port);
 
     // 获取股票列表
-    let stocks_info = client.get_stock_list().await?;
+    println!("Fetching stock list from AKTools...");
+    let stocks_info = client.get_stock_list().await.map_err(|e| {
+        println!("Error getting stock list: {}", e);
+        e
+    })?;
+    println!("Got {} stocks from AKTools", stocks_info.len());
 
     // 转换为 Stock 结构
     let stocks: Vec<Stock> = stocks_info
@@ -133,13 +140,22 @@ async fn sync_stocks_from_aktools(state: State<'_, AppState>) -> Result<SyncResu
         .collect();
 
     let count = stocks.len();
+    println!("Converted {} stocks", count);
 
     // 批量插入数据库
+    println!("Inserting into database...");
     let db = state.db.lock().map_err(|e| e.to_string())?;
-    db.batch_insert_stocks(&stocks).map_err(|e| e.to_string())?;
+    match db.batch_insert_stocks(&stocks) {
+        Ok(inserted) => println!("Successfully inserted {} stocks", inserted),
+        Err(e) => {
+            println!("Error inserting stocks: {}", e);
+            return Err(e.to_string());
+        }
+    }
     db.log_sync("stocks", "full", count as i64, "success", None)
         .map_err(|e| e.to_string())?;
 
+    println!("Sync completed successfully");
     Ok(SyncResult {
         total: count,
         success: count,
@@ -151,7 +167,6 @@ async fn sync_stocks_from_aktools(state: State<'_, AppState>) -> Result<SyncResu
 #[tauri::command]
 async fn get_kline(
     symbol: String,
-    period: String,
     start_date: String,
     end_date: String,
     adjust: String,
@@ -159,7 +174,7 @@ async fn get_kline(
 ) -> Result<Vec<KlineData>, String> {
     let port = state.python_service.get_port();
     let client = AKToolsClient::new(port);
-    client.get_kline(&symbol, &period, &start_date, &end_date, &adjust).await
+    client.get_kline(&symbol, "daily", &start_date, &end_date, &adjust).await
 }
 
 /// 获取股票详细信息
@@ -202,17 +217,67 @@ pub fn run() {
         .setup(|app| {
             // 初始化应用状态
             let state = setup_app_state(app)?;
+
+            // 检查数据库是否为空，如果是则标记需要同步
+            let need_sync = {
+                let db = state.db.lock().map_err(|e| e.to_string())?;
+                db.get_stock_count().unwrap_or(0) == 0
+            };
+
             app.manage(state);
 
             // 启动时自动启动 Python 服务
             let handle = app.handle().clone();
+            let handle_for_sync = handle.clone();
             tauri::async_runtime::spawn(async move {
                 if let Some(state) = handle.try_state::<AppState>() {
+                    // 尝试启动服务
                     if let Err(e) = state.python_service.start().await {
                         eprintln!("Failed to start Python service: {}", e);
+                        // 服务启动失败，可能是开发环境没有打包 aktools
+                        // 继续运行，用户可手动启动服务
                     }
                 }
             });
+
+            // 如果数据库为空，启动后自动同步
+            if need_sync {
+                tauri::async_runtime::spawn(async move {
+                    // 等待服务启动
+                    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+                    if let Some(state) = handle_for_sync.try_state::<AppState>() {
+                        println!("Database is empty, auto-syncing stocks...");
+                        let port = state.python_service.get_port();
+                        let client = AKToolsClient::new(port);
+
+                        if let Ok(stocks_info) = client.get_stock_list().await {
+                            let stocks: Vec<Stock> = stocks_info
+                                .into_iter()
+                                .map(|info| {
+                                    let exchange = get_exchange(&info.code);
+                                    Stock {
+                                        code: info.code,
+                                        name: info.name,
+                                        exchange,
+                                        industry: None,
+                                        market_cap: info.market_cap,
+                                        list_date: None,
+                                    }
+                                })
+                                .collect();
+
+                            let count = stocks.len();
+                            if let Ok(db) = state.db.lock() {
+                                if let Ok(inserted) = db.batch_insert_stocks(&stocks) {
+                                    println!("Auto-sync completed: {} stocks inserted", inserted);
+                                    let _ = db.log_sync("stocks", "auto", count as i64, "success", None);
+                                }
+                            }
+                        }
+                    }
+                });
+            }
 
             Ok(())
         })
