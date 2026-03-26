@@ -111,14 +111,14 @@ impl Database {
                 market_cap = excluded.market_cap,
                 list_date = excluded.list_date,
                 updated_at = CURRENT_TIMESTAMP",
-            [
+            (
                 &stock.code,
                 &stock.name,
                 &stock.exchange,
-                &stock.industry.as_deref().unwrap_or(""),
+                &stock.industry,
                 &stock.market_cap,
-                &stock.list_date.as_deref().unwrap_or(""),
-            ],
+                &stock.list_date,
+            ),
         )?;
         Ok(())
     }
@@ -139,14 +139,14 @@ impl Database {
                     market_cap = excluded.market_cap,
                     list_date = excluded.list_date,
                     updated_at = CURRENT_TIMESTAMP",
-                [
+                (
                     &stock.code,
                     &stock.name,
                     &stock.exchange,
-                    &stock.industry.as_deref().unwrap_or(""),
+                    &stock.industry,
                     &stock.market_cap,
-                    &stock.list_date.as_deref().unwrap_or(""),
-                ],
+                    &stock.list_date,
+                ),
             )?;
             count += 1;
         }
