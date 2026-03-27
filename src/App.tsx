@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { KlineChart } from './components/KlineChart';
 import './App.css';
 
 // 简单类型定义
@@ -137,12 +138,21 @@ function App() {
     }
   };
 
+  // 动态轮询服务状态
   useEffect(() => {
     fetchServiceStatus();
     fetchStocks();
-    const interval = setInterval(fetchServiceStatus, 5000);
-    return () => clearInterval(interval);
   }, []);
+
+  // 根据服务状态调整轮询频率
+  useEffect(() => {
+    // 状态变化时高频轮询 (1s)，稳定状态低频轮询 (10s)
+    const isTransitioning = serviceStatus === 'Starting' || serviceStatus === 'Stopped';
+    const intervalMs = isTransitioning ? 1000 : 10000;
+
+    const interval = setInterval(fetchServiceStatus, intervalMs);
+    return () => clearInterval(interval);
+  }, [serviceStatus]);
 
   const getStatusText = () => {
     if (typeof serviceStatus === 'string') {
@@ -226,42 +236,9 @@ function App() {
               </h2>
 
               {klineData.length > 0 ? (
-                <div className="kline-container">
-                  <h3>K线数据 (近6个月)</h3>
-                  <div className="kline-stats">
-                    <div>共 {klineData.length} 个交易日</div>
-                    <div>最新: {klineData[klineData.length - 1]?.close.toFixed(2)}</div>
-                    <div>最高: {Math.max(...klineData.map(d => d.high)).toFixed(2)}</div>
-                    <div>最低: {Math.min(...klineData.map(d => d.low)).toFixed(2)}</div>
-                  </div>
-                  <div className="kline-table-wrapper">
-                    <table className="kline-table">
-                      <thead>
-                        <tr>
-                          <th>日期</th>
-                          <th>开盘</th>
-                          <th>最高</th>
-                          <th>最低</th>
-                          <th>收盘</th>
-                          <th>成交量</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {[...klineData].reverse().slice(0, 20).map((item) => (
-                          <tr key={item.date}>
-                            <td>{item.date.split('T')[0]}</td>
-                            <td>{item.open.toFixed(2)}</td>
-                            <td>{item.high.toFixed(2)}</td>
-                            <td>{item.low.toFixed(2)}</td>
-                            <td className={item.close >= item.open ? 'up' : 'down'}>
-                              {item.close.toFixed(2)}
-                            </td>
-                            <td>{(item.volume / 10000).toFixed(2)}万</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                <div className="kline-wrapper">
+                  <h3>K线走势</h3>
+                  <KlineChart data={klineData} height={450} />
                 </div>
               ) : (
                 <div className="loading">加载K线数据中...</div>

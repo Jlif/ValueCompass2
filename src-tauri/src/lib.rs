@@ -174,7 +174,7 @@ async fn get_kline(
 ) -> Result<Vec<KlineData>, String> {
     let port = state.python_service.get_port();
     let client = AKToolsClient::new(port);
-    client.get_kline(&symbol, "daily", &start_date, &end_date, &adjust).await
+    client.get_kline("daily", &symbol, &start_date, &end_date, &adjust).await
 }
 
 /// 获取股票详细信息

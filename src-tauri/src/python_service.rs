@@ -163,8 +163,8 @@ impl PythonService {
 
         *self.process.lock().unwrap() = Some(child);
 
-        // 等待服务就绪
-        match self.wait_for_service(Duration::from_secs(30)).await {
+        // 等待服务就绪（延长到60秒，aktools首次启动可能较慢）
+        match self.wait_for_service(Duration::from_secs(60)).await {
             Ok(_) => {
                 *self.status.lock().unwrap() = ServiceStatus::Running;
                 Ok(())
@@ -289,7 +289,9 @@ impl PythonService {
     async fn wait_for_service(&self, max_wait: Duration) -> Result<(), String> {
         let port = *self.port.lock().unwrap();
         let health_url = format!("http://127.0.0.1:{}/version", port);
+        println!("Waiting for service on port {}...", port);
 
+        let start = std::time::Instant::now();
         let result = timeout(max_wait, async {
             loop {
                 // 检查进程是否还在运行
@@ -318,8 +320,18 @@ impl PythonService {
                     .build()
                 {
                     if let Ok(response) = client.get(&health_url).send().await {
-                        if response.status().is_success() {
+                        let status = response.status();
+                        if status.is_success() {
+                            println!("Service is ready on port {}", port);
                             return Ok(());
+                        } else {
+                            println!("Health check returned status: {}", status);
+                        }
+                    } else {
+                        // 每5秒打印一次尝试信息
+                        let elapsed = start.elapsed().as_secs();
+                        if elapsed % 5 == 0 {
+                            println!("Still waiting for service... ({}s)", elapsed);
                         }
                     }
                 }

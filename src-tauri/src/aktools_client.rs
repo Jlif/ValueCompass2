@@ -71,39 +71,46 @@ impl AKToolsClient {
         Ok(stocks)
     }
 
-    /// 获取 K 线数据 (使用 stock_zh_a_daily 替代 stock_zh_a_hist)
+    /// 获取 K 线数据 (使用 stock_zh_a_hist)
     pub async fn get_kline(
         &self,
+        _period: &str,
         symbol: &str,
-        period: &str,
         start_date: &str,
         end_date: &str,
         adjust: &str,
     ) -> Result<Vec<KlineData>, String> {
-        // stock_zh_a_daily 需要带交易所前缀的 symbol (如 sz000001)
-        let symbol_with_prefix = if symbol.len() == 6 {
-            // 根据代码规则添加交易所前缀
-            let prefix = if symbol.starts_with("6") {
-                "sh"
-            } else if symbol.starts_with("0") || symbol.starts_with("3") {
-                "sz"
-            } else if symbol.starts_with("4") || symbol.starts_with("8") {
-                "bj"
-            } else {
-                "sz" // 默认
-            };
-            format!("{}{}", prefix, symbol)
+        // stock_zh_a_hist 只需要纯股票代码（不带交易所前缀）
+        let code = if symbol.len() > 6 {
+            // 去除交易所前缀 (如 sz000001 -> 000001)
+            symbol[symbol.len()-6..].to_string()
         } else {
             symbol.to_string()
         };
 
-        let url = format!("{}/api/public/stock_zh_a_daily", self.base_url);
+        // 日期格式转换: YYYY-MM-DD -> YYYYMMDD
+        let start_date_formatted = start_date.replace("-", "");
+        let end_date_formatted = end_date.replace("-", "");
+
+        // adjust 参数转换
+        let adjust_param = match adjust {
+            "qfq" => "qfq",
+            "hfq" => "hfq",
+            "" | "none" => "",
+            _ => adjust,
+        };
+
+        let url = format!("{}/api/public/stock_zh_a_hist", self.base_url);
+
+        println!("[aktools] get_kline request: code={}, start={}, end={}, adjust={}",
+                 code, start_date_formatted, end_date_formatted, adjust_param);
 
         let params = [
-            ("symbol", symbol_with_prefix.as_str()),
-            ("start_date", start_date),
-            ("end_date", end_date),
-            ("adjust", adjust),
+            ("symbol", code.as_str()),
+            ("period", "daily"),
+            ("start_date", start_date_formatted.as_str()),
+            ("end_date", end_date_formatted.as_str()),
+            ("adjust", adjust_param),
         ];
 
         let response = self.client
@@ -113,31 +120,41 @@ impl AKToolsClient {
             .await
             .map_err(|e| format!("Request failed: {}", e))?;
 
-        if !response.status().is_success() {
-            return Err(format!("HTTP error: {}", response.status()));
+        let status = response.status();
+        let body_text = response.text().await.unwrap_or_default();
+        println!("[aktools] get_kline response: status={}", status);
+
+        if !status.is_success() {
+            return Err(format!("HTTP error: {}, body: {}", status, &body_text[..body_text.len().min(200)]));
         }
 
-        let data: Vec<serde_json::Value> = response
-            .json()
-            .await
+        let data: Vec<serde_json::Value> = serde_json::from_str(&body_text)
             .map_err(|e| format!("Failed to parse JSON: {}", e))?;
 
-        // stock_zh_a_daily 返回英文字段名
+        // stock_zh_a_hist 返回中文字段名
         let klines: Vec<KlineData> = data
             .into_iter()
             .filter_map(|v| {
+                // 日期格式转换: 2025-09-29T00:00:00.000 -> 2025-09-29
+                let date_raw = v.get("日期")?.as_str()?;
+                let date_formatted = if date_raw.len() >= 10 {
+                    date_raw[..10].to_string()
+                } else {
+                    date_raw.to_string()
+                };
+
                 Some(KlineData {
-                    date: v.get("date")?.as_str()?.to_string(),
-                    open: v.get("open")?.as_f64()?,
-                    high: v.get("high")?.as_f64()?,
-                    low: v.get("low")?.as_f64()?,
-                    close: v.get("close")?.as_f64()?,
-                    volume: v.get("volume")?.as_f64()?,  // 注意：stock_zh_a_daily 返回的是 float
-                    amount: v.get("amount").and_then(|v| v.as_f64()),
-                    amplitude: None,
-                    pct_change: v.get("p_change").and_then(|v| v.as_f64()),
-                    change: None,
-                    turnover: v.get("turnover").and_then(|v| v.as_f64()),
+                    date: date_formatted,
+                    open: v.get("开盘")?.as_f64()?,
+                    high: v.get("最高")?.as_f64()?,
+                    low: v.get("最低")?.as_f64()?,
+                    close: v.get("收盘")?.as_f64()?,
+                    volume: v.get("成交量")?.as_f64()?,
+                    amount: v.get("成交额").and_then(|v| v.as_f64()),
+                    amplitude: v.get("振幅").and_then(|v| v.as_f64()),
+                    pct_change: v.get("涨跌幅").and_then(|v| v.as_f64()),
+                    change: v.get("涨跌额").and_then(|v| v.as_f64()),
+                    turnover: v.get("换手率").and_then(|v| v.as_f64()),
                 })
             })
             .collect();
