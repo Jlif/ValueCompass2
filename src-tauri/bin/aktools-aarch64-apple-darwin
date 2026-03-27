@@ -1,2 +1,0 @@
-#!/bin/bash
-echo "AKTools not built yet. Run: cd python && python build.py"
