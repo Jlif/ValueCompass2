@@ -25,8 +25,8 @@ fn setup_app_state(app: &tauri::App) -> Result<AppState, Box<dyn std::error::Err
     let db = Database::new(app_dir)?;
     let db = Arc::new(Mutex::new(db));
 
-    // 初始化 Python 服务（默认端口 8080）
-    let python_service = Arc::new(PythonService::new(8080));
+    // 初始化 Python 服务（传入 0 表示自动选择可用端口）
+    let python_service = Arc::new(PythonService::new(0));
 
     Ok(AppState {
         db,
@@ -283,12 +283,24 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             // 窗口关闭时停止 Python 服务
-            if let tauri::WindowEvent::Destroyed = event {
-                if let Some(state) = window.try_state::<AppState>() {
-                    tauri::async_runtime::block_on(async {
-                        let _ = state.python_service.stop().await;
-                    });
+            match event {
+                tauri::WindowEvent::Destroyed => {
+                    println!("Window destroyed, stopping Python service...");
+                    if let Some(state) = window.try_state::<AppState>() {
+                        tauri::async_runtime::block_on(async {
+                            let _ = state.python_service.stop().await;
+                        });
+                    }
                 }
+                tauri::WindowEvent::CloseRequested { .. } => {
+                    println!("Close requested, will stop Python service...");
+                    if let Some(state) = window.try_state::<AppState>() {
+                        tauri::async_runtime::block_on(async {
+                            let _ = state.python_service.stop().await;
+                        });
+                    }
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -309,6 +321,28 @@ pub fn run() {
             get_kline,
             get_stock_detail,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            // 应用退出事件处理
+            match event {
+                tauri::RunEvent::Exit => {
+                    println!("Application exiting, stopping Python service...");
+                    if let Some(state) = _app_handle.try_state::<AppState>() {
+                        tauri::async_runtime::block_on(async {
+                            let _ = state.python_service.stop().await;
+                        });
+                    }
+                }
+                tauri::RunEvent::ExitRequested { .. } => {
+                    println!("Exit requested, stopping Python service...");
+                    if let Some(state) = _app_handle.try_state::<AppState>() {
+                        tauri::async_runtime::block_on(async {
+                            let _ = state.python_service.stop().await;
+                        });
+                    }
+                }
+                _ => {}
+            }
+        });
 }

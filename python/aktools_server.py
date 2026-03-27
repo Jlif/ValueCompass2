@@ -13,6 +13,7 @@ import sys
 import os
 import argparse
 import signal
+import importlib.util
 
 # Ensure we can find aktools when bundled
 if getattr(sys, 'frozen', False):
@@ -22,11 +23,6 @@ else:
     # Running in a normal Python environment
     bundle_dir = os.path.dirname(os.path.abspath(__file__))
 
-# Add bundled site-packages to path if exists
-site_packages = os.path.join(bundle_dir, 'site-packages')
-if os.path.exists(site_packages) and site_packages not in sys.path:
-    sys.path.insert(0, site_packages)
-
 
 def main():
     parser = argparse.ArgumentParser(description='AKTools Server')
@@ -34,16 +30,34 @@ def main():
     parser.add_argument('--host', type=str, default='127.0.0.1', help='Host to bind to')
     args = parser.parse_args()
 
-    # Import aktools after path setup
+    # Find aktools location
     try:
-        from aktools import get_default_application
-        import uvicorn
+        import aktools
+        aktools_dir = os.path.dirname(aktools.__file__)
     except ImportError as e:
         print(f"Error: Failed to import aktools: {e}", file=sys.stderr)
-        print(f"Python path: {sys.path}", file=sys.stderr)
         sys.exit(1)
 
-    app = get_default_application()
+    # Import main app from aktools directory
+    try:
+        import uvicorn
+
+        # Change to aktools directory so uvicorn can find main:app
+        original_dir = os.getcwd()
+        os.chdir(aktools_dir)
+
+        # Import main module from aktools directory
+        spec = importlib.util.spec_from_file_location("main", os.path.join(aktools_dir, "main.py"))
+        main_module = importlib.util.module_from_spec(spec)
+        sys.modules["main"] = main_module
+        spec.loader.exec_module(main_module)
+        app = main_module.app
+
+        # Change back to original directory
+        os.chdir(original_dir)
+    except ImportError as e:
+        print(f"Error: Failed to import: {e}", file=sys.stderr)
+        sys.exit(1)
 
     # Handle signals gracefully
     def signal_handler(sig, frame):

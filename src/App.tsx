@@ -127,6 +127,16 @@ function App() {
     }
   };
 
+  // 停止服务
+  const stopService = async () => {
+    try {
+      await invoke('stop_python_service');
+      await fetchServiceStatus();
+    } catch (e) {
+      alert('停止服务失败: ' + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+
   useEffect(() => {
     fetchServiceStatus();
     fetchStocks();
@@ -142,19 +152,28 @@ function App() {
   };
 
   const isRunning = serviceStatus === 'Running';
+  const isStarting = serviceStatus === 'Starting';
 
   return (
     <div className="app">
       <header className="app-header">
-        <h1>ValueCompass - A股价值分析</h1>
+        <h1>价值罗盘 - A股价值投资的好帮手</h1>
         <div className="status-bar">
-          <span>Python服务: </span>
+          <span>aktools服务: </span>
           <span className={`status-${getStatusText().toLowerCase().split(':')[0]}`}>
             {getStatusText()}
           </span>
-          {!isRunning && (
-            <button onClick={startService} className="btn-small">
-              启动服务
+          {isRunning ? (
+            <button onClick={stopService} className="btn-small btn-danger">
+              停止服务
+            </button>
+          ) : (
+            <button
+              onClick={startService}
+              className="btn-small"
+              disabled={isStarting}
+            >
+              {isStarting ? '启动中...' : '启动服务'}
             </button>
           )}
         </div>

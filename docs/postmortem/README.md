@@ -8,6 +8,7 @@
 |------|------|------|--------|
 | [POST-001](./POST-001-tauri-python-sidecar.md) | Tauri + Python 混合架构踩坑记录 | 2026-03-26 | Tauri, Python, Sidecar, PyInstaller |
 | [POST-002](./POST-002-aktools-404-error.md) | AKTools API 404 错误与数据同步问题 | 2026-03-27 | AKTools, API, 404, URL 路径 |
+| [POST-003](./2026-03-27-tauri-aktools-packaging.md) | Tauri + AKTools 打包调试复盘 | 2026-03-27 | 打包, 端口冲突, 服务检测, 进程管理 |
 
 ## 分类索引
 
@@ -25,6 +26,10 @@
 - [POST-001: PyInstaller 打包](./POST-001-tauri-python-sidecar.md)
   - Sidecar 占位文件方案
   - 开发/生产流程分离
+- [POST-003: Tauri + AKTools 打包调试](./2026-03-27-tauri-aktools-packaging.md)
+  - 动态端口分配
+  - 服务健康检测
+  - 进程生命周期管理
 
 ## 格式建议
 

@@ -68,6 +68,20 @@ body {
   background: #f0f0f0;
 }
 
+.btn-small:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-small.btn-danger {
+  background: #ff6b6b;
+  color: white;
+}
+
+.btn-small.btn-danger:hover {
+  background: #ff5252;
+}
+
 .app-main {
   flex: 1;
   display: flex;

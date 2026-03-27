@@ -1,8 +1,45 @@
+use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use tokio::time::timeout;
+
+/// 通过端口停止 aktools 服务
+async fn stop_aktools_by_port(port: u16) -> Result<(), String> {
+    // 方法1: 尝试通过 lsof 找到进程并杀死 (macOS/Linux)
+    #[cfg(target_os = "macos")]
+    {
+        let output = Command::new("lsof")
+            .args(&["-ti", &format!(":{}", port)])
+            .output();
+
+        if let Ok(output) = output {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            let pid_str = output_str.trim();
+            if !pid_str.is_empty() {
+                for pid in pid_str.split_whitespace() {
+                    let _ = Command::new("kill")
+                        .args(&["-9", pid])
+                        .status();
+                }
+                // 等待端口释放
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                return Ok(());
+            }
+        }
+    }
+
+    // 方法2: 尝试通过 pkill 停止 aktools (通用方法)
+    let _ = Command::new("pkill")
+        .args(&["-9", "-f", "aktools"])
+        .status();
+
+    // 等待端口释放
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    Ok(())
+}
 
 /// Python 服务状态
 #[derive(Debug, Clone, serde::Serialize)]
@@ -16,18 +53,35 @@ pub enum ServiceStatus {
 /// Python 服务管理器
 pub struct PythonService {
     process: Arc<Mutex<Option<Child>>>,
-    port: u16,
+    port: Arc<Mutex<u16>>,
     status: Arc<Mutex<ServiceStatus>>,
 }
 
 impl PythonService {
-    /// 创建新的服务管理器
+    /// 创建新的服务管理器（传入 0 表示自动选择端口）
     pub fn new(port: u16) -> Self {
         Self {
             process: Arc::new(Mutex::new(None)),
-            port,
+            port: Arc::new(Mutex::new(port)),
             status: Arc::new(Mutex::new(ServiceStatus::Stopped)),
         }
+    }
+
+    /// 查找可用端口
+    fn find_available_port(start_port: u16) -> Option<u16> {
+        for port in start_port..=65535 {
+            if let Ok(listener) = TcpListener::bind(format!("127.0.0.1:{}", port)) {
+                // 成功绑定，端口可用
+                drop(listener);
+                return Some(port);
+            }
+        }
+        None
+    }
+
+    /// 获取当前端口
+    pub fn get_port(&self) -> u16 {
+        *self.port.lock().unwrap()
     }
 
     /// 获取当前状态
@@ -37,20 +91,62 @@ impl PythonService {
 
     /// 启动 Python 服务
     pub async fn start(&self) -> Result<(), String> {
-        // 检查是否已在运行
+        // 检查是否已在运行（通过 HTTP）
         if self.is_running().await {
+            println!("Service is already running on port {}", self.get_port());
             return Ok(());
         }
 
         // 更新状态
         *self.status.lock().unwrap() = ServiceStatus::Starting;
 
+        // 首先检查默认端口 18080 是否已有服务在运行（可能是上次遗留的）
+        if Self::check_port_in_use(18080).await {
+            *self.port.lock().unwrap() = 18080;
+            *self.status.lock().unwrap() = ServiceStatus::Running;
+            println!("Found existing service on port 18080");
+            return Ok(());
+        }
+
+        // 查找可用端口
+        let current_port = *self.port.lock().unwrap();
+        let port = if current_port == 0 || current_port == 18080 {
+            // 从 18080 开始找可用端口
+            Self::find_available_port(18080)
+                .or_else(|| Self::find_available_port(18081))
+                .or_else(|| Self::find_available_port(10000))
+                .ok_or_else(|| "No available port found".to_string())?
+        } else {
+            // 检查当前端口是否可用
+            if TcpListener::bind(format!("127.0.0.1:{}", current_port)).is_ok() {
+                current_port
+            } else {
+                // 端口被占用，寻找新端口
+                Self::find_available_port(current_port + 1)
+                    .or_else(|| Self::find_available_port(18080))
+                    .ok_or_else(|| "No available port found".to_string())?
+            }
+        };
+
+        // 再次检查目标端口是否有服务在运行（可能有其他应用启动了服务）
+        if Self::check_port_in_use(port).await {
+            *self.port.lock().unwrap() = port;
+            *self.status.lock().unwrap() = ServiceStatus::Running;
+            println!("Found existing service on port {}", port);
+            return Ok(());
+        }
+
+        // 更新端口
+        *self.port.lock().unwrap() = port;
+        println!("Starting service on port: {}", port);
+
         // 查找 aktools 可执行文件
         let executable = self.find_aktools_executable()?;
 
         // 启动进程（清除代理环境变量，避免影响东方财富 API 连接）
+        let port = *self.port.lock().unwrap();
         let child = Command::new(&executable)
-            .arg(format!("--port={}", self.port))
+            .arg(format!("--port={}", port))
             .arg("--host=127.0.0.1")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -83,12 +179,24 @@ impl PythonService {
 
     /// 停止 Python 服务
     pub async fn stop(&self) -> Result<(), String> {
-        let mut process = self.process.lock().unwrap();
+        // 先检查是否有保存的进程句柄
+        let has_process = {
+            let mut process = self.process.lock().unwrap();
+            if let Some(mut child) = process.take() {
+                // 尝试优雅终止
+                let _ = child.kill();
+                let _ = child.wait();
+                true
+            } else {
+                false
+            }
+        };
 
-        if let Some(mut child) = process.take() {
-            // 尝试优雅终止
-            let _ = child.kill();
-            let _ = child.wait();
+        // 如果没有保存的进程句柄（可能是检测到已存在的服务）
+        // 尝试通过系统命令停止 aktools 进程
+        if !has_process {
+            let port = *self.port.lock().unwrap();
+            stop_aktools_by_port(port).await?;
         }
 
         *self.status.lock().unwrap() = ServiceStatus::Stopped;
@@ -179,7 +287,8 @@ impl PythonService {
 
     /// 等待服务就绪
     async fn wait_for_service(&self, max_wait: Duration) -> Result<(), String> {
-        let health_url = format!("http://127.0.0.1:{}/", self.port);
+        let port = *self.port.lock().unwrap();
+        let health_url = format!("http://127.0.0.1:{}/version", port);
 
         let result = timeout(max_wait, async {
             loop {
@@ -203,9 +312,9 @@ impl PythonService {
                     }
                 }
 
-                // 尝试连接 HTTP 服务
+                // 尝试连接 HTTP 服务（使用 /version 端点）
                 if let Ok(client) = reqwest::Client::builder()
-                    .timeout(Duration::from_secs(2))
+                    .timeout(Duration::from_secs(3))
                     .build()
                 {
                     if let Ok(response) = client.get(&health_url).send().await {
@@ -221,13 +330,28 @@ impl PythonService {
 
         match result {
             Ok(inner) => inner,
-            Err(_) => Err(format!("Timeout waiting for service on port {}", self.port)),
+            Err(_) => Err(format!("Timeout waiting for service on port {}", port)),
         }
     }
 
-    /// 检查服务是否正在运行
+    /// 检查服务是否正在运行（通过 HTTP /version 端点）
     async fn is_running(&self) -> bool {
-        // 检查进程状态
+        let port = *self.port.lock().unwrap();
+
+        // 首先检查 HTTP 服务是否可达（使用 /version 端点）
+        let health_url = format!("http://127.0.0.1:{}/version", port);
+        if let Ok(client) = reqwest::Client::builder()
+            .timeout(Duration::from_secs(3))
+            .build()
+        {
+            if let Ok(response) = client.get(&health_url).send().await {
+                if response.status().is_success() {
+                    return true;
+                }
+            }
+        }
+
+        // HTTP 不可达，检查进程是否还在运行
         {
             let mut process = self.process.lock().unwrap();
             if let Some(ref mut child) = *process {
@@ -238,32 +362,29 @@ impl PythonService {
                         return false;
                     }
                     Ok(None) => {
-                        // 进程仍在运行，继续检查 HTTP
+                        // 进程仍在运行但 HTTP 不可达，可能是启动中
+                        return false;
                     }
                     Err(_) => return false,
                 }
-            } else {
-                return false;
-            }
-        }
-
-        // 检查 HTTP 服务
-        let health_url = format!("http://127.0.0.1:{}/", self.port);
-        if let Ok(client) = reqwest::Client::builder()
-            .timeout(Duration::from_secs(2))
-            .build()
-        {
-            if let Ok(response) = client.get(&health_url).send().await {
-                return response.status().is_success();
             }
         }
 
         false
     }
 
-    /// 获取服务端口
-    pub fn get_port(&self) -> u16 {
-        self.port
+    /// 检查指定端口是否已有服务在运行（使用 /version 端点）
+    async fn check_port_in_use(port: u16) -> bool {
+        let health_url = format!("http://127.0.0.1:{}/version", port);
+        if let Ok(client) = reqwest::Client::builder()
+            .timeout(Duration::from_secs(3))
+            .build()
+        {
+            if let Ok(response) = client.get(&health_url).send().await {
+                return response.status().is_success();
+            }
+        }
+        false
     }
 }
 
