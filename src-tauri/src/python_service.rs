@@ -47,6 +47,7 @@ pub enum ServiceStatus {
     Stopped,
     Starting,
     Running,
+    Stopping,  // 新增：停止中
     Failed(String),
 }
 
@@ -179,6 +180,9 @@ impl PythonService {
 
     /// 停止 Python 服务
     pub async fn stop(&self) -> Result<(), String> {
+        // 设置停止中状态
+        *self.status.lock().unwrap() = ServiceStatus::Stopping;
+
         // 先检查是否有保存的进程句柄
         let has_process = {
             let mut process = self.process.lock().unwrap();
@@ -197,6 +201,15 @@ impl PythonService {
         if !has_process {
             let port = *self.port.lock().unwrap();
             stop_aktools_by_port(port).await?;
+        }
+
+        // 等待服务完全停止（最多5秒）
+        let port = *self.port.lock().unwrap();
+        for _ in 0..50 {
+            if !Self::check_port_in_use(port).await {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
         *self.status.lock().unwrap() = ServiceStatus::Stopped;

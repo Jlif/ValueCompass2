@@ -50,6 +50,10 @@ body {
   color: #ff9800;
 }
 
+.status-stopping {
+  color: #ff9800;
+}
+
 .status-failed {
   color: #f44336;
 }
@@ -387,10 +391,43 @@ button:disabled {
   padding: 20px;
 }
 
-.kline-wrapper h3 {
-  margin: 0 0 16px 0;
+.kline-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.kline-header h3 {
+  margin: 0;
   font-size: 16px;
   color: #333;
+}
+
+.period-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.period-tab {
+  padding: 4px 12px;
+  font-size: 13px;
+  border: 1px solid #ddd;
+  background: white;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.period-tab:hover {
+  background: #f5f5f5;
+  border-color: #bbb;
+}
+
+.period-tab.active {
+  background: #1976d2;
+  color: white;
+  border-color: #1976d2;
 }
 
 .kline-chart-wrapper {

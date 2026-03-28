@@ -5,9 +5,10 @@ import { KlineData } from '../types';
 interface KlineChartProps {
   data: KlineData[];
   height?: number;
+  period?: 'daily' | 'weekly' | 'monthly';
 }
 
-export function KlineChart({ data, height = 400 }: KlineChartProps) {
+export function KlineChart({ data, height = 400, period: _period }: KlineChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);

@@ -16,10 +16,40 @@ pub struct Stock {
 
 /// 自选股票
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct WatchlistItem {
     pub id: i64,
     pub code: String,
     pub added_at: String,
+}
+
+/// K 线数据缓存
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[allow(dead_code)]
+pub struct KlineCache {
+    pub id: i64,
+    pub code: String,
+    pub period: String, // daily, weekly, monthly
+    pub date: String,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    pub volume: f64,
+    pub amount: Option<f64>,
+    pub cached_at: String,
+}
+
+/// K线数据点（简化版，用于插入）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct KlineDataPoint {
+    pub date: String,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    pub volume: f64,
+    pub amount: Option<f64>,
 }
 
 /// 数据库管理
@@ -96,10 +126,40 @@ impl Database {
             [],
         )?;
 
+        // K线数据缓存表
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS kline_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT NOT NULL,
+                period TEXT NOT NULL,
+                date TEXT NOT NULL,
+                open REAL NOT NULL,
+                high REAL NOT NULL,
+                low REAL NOT NULL,
+                close REAL NOT NULL,
+                volume REAL NOT NULL,
+                amount REAL,
+                cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(code, period, date)
+            )",
+            [],
+        )?;
+
+        // K线缓存索引
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_kline_code_period ON kline_cache(code, period)",
+            [],
+        )?;
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_kline_date ON kline_cache(date)",
+            [],
+        )?;
+
         Ok(())
     }
 
     /// 插入或更新股票
+    #[allow(dead_code)]
     pub fn upsert_stock(&self, stock: &Stock) -> SqliteResult<()> {
         self.conn.execute(
             "INSERT INTO stocks (code, name, exchange, industry, market_cap, list_date)
@@ -272,5 +332,75 @@ impl Database {
             [table_name, sync_type, &records_count.to_string(), status, error.unwrap_or("")],
         )?;
         Ok(())
+    }
+
+    /// 获取K线缓存数据
+    pub fn get_kline_cache(&self, code: &str, period: &str, start_date: &str, end_date: &str) -> SqliteResult<Vec<KlineDataPoint>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT date, open, high, low, close, volume, amount
+             FROM kline_cache
+             WHERE code = ?1 AND period = ?2 AND date >= ?3 AND date <= ?4
+             ORDER BY date"
+        )?;
+
+        let klines = stmt.query_map([code, period, start_date, end_date], |row| {
+            Ok(KlineDataPoint {
+                date: row.get(0)?,
+                open: row.get(1)?,
+                high: row.get(2)?,
+                low: row.get(3)?,
+                close: row.get(4)?,
+                volume: row.get(5)?,
+                amount: row.get(6)?,
+            })
+        })?;
+
+        klines.collect()
+    }
+
+    /// 批量插入或更新K线缓存
+    pub fn batch_upsert_kline_cache(&self, code: &str, period: &str, klines: &[KlineDataPoint]) -> SqliteResult<usize> {
+        let mut count = 0;
+        let tx = self.conn.unchecked_transaction()?;
+
+        for kline in klines {
+            tx.execute(
+                "INSERT INTO kline_cache (code, period, date, open, high, low, close, volume, amount)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                 ON CONFLICT(code, period, date) DO UPDATE SET
+                    open = excluded.open,
+                    high = excluded.high,
+                    low = excluded.low,
+                    close = excluded.close,
+                    volume = excluded.volume,
+                    amount = excluded.amount,
+                    cached_at = CURRENT_TIMESTAMP",
+                [
+                    code,
+                    period,
+                    &kline.date,
+                    &kline.open.to_string(),
+                    &kline.high.to_string(),
+                    &kline.low.to_string(),
+                    &kline.close.to_string(),
+                    &kline.volume.to_string(),
+                    &kline.amount.map(|v| v.to_string()).unwrap_or_default(),
+                ],
+            )?;
+            count += 1;
+        }
+
+        tx.commit()?;
+        Ok(count)
+    }
+
+    /// 清除过期的K线缓存（保留最近2年的数据）
+    #[allow(dead_code)]
+    pub fn cleanup_kline_cache(&self) -> SqliteResult<usize> {
+        let mut stmt = self.conn.prepare(
+            "DELETE FROM kline_cache WHERE date < date('now', '-2 years')"
+        )?;
+        let count = stmt.execute([])?;
+        Ok(count)
     }
 }

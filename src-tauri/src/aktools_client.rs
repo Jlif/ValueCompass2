@@ -71,10 +71,10 @@ impl AKToolsClient {
         Ok(stocks)
     }
 
-    /// 获取 K 线数据 (使用 stock_zh_a_hist)
+    /// 获取 K 线数据 (使用 stock_zh_a_hist，支持日线/周线/月线)
     pub async fn get_kline(
         &self,
-        _period: &str,
+        period: &str, // daily, weekly, monthly
         symbol: &str,
         start_date: &str,
         end_date: &str,
@@ -92,6 +92,14 @@ impl AKToolsClient {
         let start_date_formatted = start_date.replace("-", "");
         let end_date_formatted = end_date.replace("-", "");
 
+        // period 参数转换
+        let period_param = match period {
+            "daily" => "daily",
+            "weekly" => "weekly",
+            "monthly" => "monthly",
+            _ => "daily",
+        };
+
         // adjust 参数转换
         let adjust_param = match adjust {
             "qfq" => "qfq",
@@ -102,12 +110,12 @@ impl AKToolsClient {
 
         let url = format!("{}/api/public/stock_zh_a_hist", self.base_url);
 
-        println!("[aktools] get_kline request: code={}, start={}, end={}, adjust={}",
-                 code, start_date_formatted, end_date_formatted, adjust_param);
+        println!("[aktools] get_kline request: code={}, period={}, start={}, end={}, adjust={}",
+                 code, period_param, start_date_formatted, end_date_formatted, adjust_param);
 
         let params = [
             ("symbol", code.as_str()),
-            ("period", "daily"),
+            ("period", period_param),
             ("start_date", start_date_formatted.as_str()),
             ("end_date", end_date_formatted.as_str()),
             ("adjust", adjust_param),

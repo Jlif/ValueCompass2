@@ -5,7 +5,7 @@ mod database;
 mod python_service;
 mod aktools_client;
 
-use database::{Database, Stock};
+use database::{Database, Stock, KlineDataPoint};
 use python_service::{PythonService, ServiceStatus};
 use aktools_client::{AKToolsClient, KlineData, StockDetail};
 
@@ -163,18 +163,82 @@ async fn sync_stocks_from_aktools(state: State<'_, AppState>) -> Result<SyncResu
     })
 }
 
-/// 获取 K 线数据
+/// 获取 K 线数据（支持缓存和周期切换）
 #[tauri::command]
 async fn get_kline(
     symbol: String,
     start_date: String,
     end_date: String,
     adjust: String,
+    period: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<KlineData>, String> {
+    // 提取股票代码
+    let code = if symbol.len() > 6 {
+        symbol[symbol.len()-6..].to_string()
+    } else {
+        symbol.clone()
+    };
+
+    let period_str = match period.as_str() {
+        "daily" => "daily",
+        "weekly" => "weekly",
+        "monthly" => "monthly",
+        _ => "daily",
+    };
+
+    // 1. 先尝试从缓存获取
+    let cached_data = {
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.get_kline_cache(&code, period_str, &start_date, &end_date)
+            .map_err(|e| e.to_string())?
+    };
+
+    // 如果缓存数据完整，直接返回
+    if !cached_data.is_empty() {
+        println!("[kline] Using cache for {} {} data, count: {}", code, period_str, cached_data.len());
+        let result: Vec<KlineData> = cached_data.into_iter().map(|item| KlineData {
+            date: item.date,
+            open: item.open,
+            high: item.high,
+            low: item.low,
+            close: item.close,
+            volume: item.volume,
+            amount: item.amount,
+            amplitude: None,
+            pct_change: None,
+            change: None,
+            turnover: None,
+        }).collect();
+        return Ok(result);
+    }
+
+    // 2. 缓存未命中，从API获取
     let port = state.python_service.get_port();
     let client = AKToolsClient::new(port);
-    client.get_kline("daily", &symbol, &start_date, &end_date, &adjust).await
+    let klines = client.get_kline(period_str, &symbol, &start_date, &end_date, &adjust).await?;
+
+    // 3. 将数据存入缓存
+    if !klines.is_empty() {
+        let cache_points: Vec<KlineDataPoint> = klines.iter().map(|k| KlineDataPoint {
+            date: k.date.clone(),
+            open: k.open,
+            high: k.high,
+            low: k.low,
+            close: k.close,
+            volume: k.volume,
+            amount: k.amount,
+        }).collect();
+
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        if let Err(e) = db.batch_upsert_kline_cache(&code, period_str, &cache_points) {
+            println!("[kline] Failed to cache data: {}", e);
+        } else {
+            println!("[kline] Cached {} {} data points for {}", klines.len(), period_str, code);
+        }
+    }
+
+    Ok(klines)
 }
 
 /// 获取股票详细信息

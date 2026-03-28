@@ -21,17 +21,23 @@ interface KlineData {
   volume: number;
 }
 
-type ServiceStatus = 'Stopped' | 'Starting' | 'Running' | { Failed: string };
+type Period = 'daily' | 'weekly' | 'monthly';
+type ServiceStatus = 'Stopped' | 'Starting' | 'Running' | 'Stopping' | { Failed: string };
 
 function App() {
   const [serviceStatus, setServiceStatus] = useState<ServiceStatus>('Stopped');
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [selectedStock, setSelectedStock] = useState<Stock | null>(null);
   const [klineData, setKlineData] = useState<KlineData[]>([]);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchKeyword, setSearchKeyword] = useState('');
   const [syncing, setSyncing] = useState(false);
+  const [period, setPeriod] = useState<Period>('daily');
+
+  const isRunning = serviceStatus === 'Running';
+  const isStarting = serviceStatus === 'Starting';
+  const isStopping = serviceStatus === 'Stopping';
+  const isTransitioning = isStarting || isStopping;
 
   // 获取服务状态
   const fetchServiceStatus = async () => {
@@ -45,15 +51,12 @@ function App() {
 
   // 获取股票列表
   const fetchStocks = async () => {
-    setLoading(true);
     try {
       const data = await invoke<Stock[]>('get_all_stocks');
       setStocks(data);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -63,14 +66,11 @@ function App() {
       await fetchStocks();
       return;
     }
-    setLoading(true);
     try {
       const data = await invoke<Stock[]>('search_stocks', { keyword: searchKeyword });
       setStocks(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -95,26 +95,28 @@ function App() {
   };
 
   // 获取 K 线数据
-  const fetchKline = async (stock: Stock) => {
+  const fetchKline = async (stock: Stock, targetPeriod: Period = period) => {
     setSelectedStock(stock);
-    setLoading(true);
     try {
       const symbol = stock.exchange.toLowerCase() + stock.code;
       const endDate = new Date().toISOString().split('T')[0];
-      const startDate = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      // 根据周期调整起始日期
+      let days = 180;
+      if (targetPeriod === 'weekly') days = 365;
+      if (targetPeriod === 'monthly') days = 365 * 3;
+      const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
       const data = await invoke<KlineData[]>('get_kline', {
         symbol,
         startDate,
         endDate,
         adjust: 'qfq',
+        period: targetPeriod,
       });
       setKlineData(data);
     } catch (e) {
       console.error('Failed to fetch kline:', e);
       setKlineData([]);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -147,12 +149,11 @@ function App() {
   // 根据服务状态调整轮询频率
   useEffect(() => {
     // 状态变化时高频轮询 (1s)，稳定状态低频轮询 (10s)
-    const isTransitioning = serviceStatus === 'Starting' || serviceStatus === 'Stopped';
     const intervalMs = isTransitioning ? 1000 : 10000;
 
     const interval = setInterval(fetchServiceStatus, intervalMs);
     return () => clearInterval(interval);
-  }, [serviceStatus]);
+  }, [serviceStatus, isTransitioning]);
 
   const getStatusText = () => {
     if (typeof serviceStatus === 'string') {
@@ -160,9 +161,6 @@ function App() {
     }
     return `Failed: ${serviceStatus.Failed}`;
   };
-
-  const isRunning = serviceStatus === 'Running';
-  const isStarting = serviceStatus === 'Starting';
 
   return (
     <div className="app">
@@ -174,8 +172,8 @@ function App() {
             {getStatusText()}
           </span>
           {isRunning ? (
-            <button onClick={stopService} className="btn-small btn-danger">
-              停止服务
+            <button onClick={stopService} className="btn-small btn-danger" disabled={isStopping}>
+              {isStopping ? '停止中...' : '停止服务'}
             </button>
           ) : (
             <button
@@ -208,9 +206,8 @@ function App() {
           </div>
 
           <div className="stock-list">
-            {loading && <div className="loading">加载中...</div>}
             {error && <div className="error">错误: {error}</div>}
-            {!loading && stocks.length === 0 && (
+            {stocks.length === 0 && (
               <div className="empty">暂无股票数据，请点击"同步股票列表"</div>
             )}
             {stocks.map((stock) => (
@@ -235,13 +232,31 @@ function App() {
                 <span className="exchange">{selectedStock.exchange}</span>
               </h2>
 
-              {klineData.length > 0 ? (
-                <div className="kline-wrapper">
-                  <h3>K线走势</h3>
-                  <KlineChart data={klineData} height={450} />
-                </div>
+              {klineData.length === 0 ? (
+                <div className="loading">暂无K线数据</div>
               ) : (
-                <div className="loading">加载K线数据中...</div>
+                <div className="kline-wrapper">
+                  <div className="kline-header">
+                    <h3>K线走势</h3>
+                    <div className="period-tabs">
+                      {(['daily', 'weekly', 'monthly'] as Period[]).map((p) => (
+                        <button
+                          key={p}
+                          className={`period-tab ${period === p ? 'active' : ''}`}
+                          onClick={() => {
+                            setPeriod(p);
+                            if (selectedStock) {
+                              fetchKline(selectedStock, p);
+                            }
+                          }}
+                        >
+                          {p === 'daily' ? '日K' : p === 'weekly' ? '周K' : '月K'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <KlineChart data={klineData} height={450} period={period} />
+                </div>
               )}
             </div>
           ) : (
