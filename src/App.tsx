@@ -294,7 +294,10 @@ function App() {
                   <div
                     key={stock.code}
                     className={`stock-item ${selectedStock?.code === stock.code ? 'active' : ''}`}
-                    onClick={() => fetchKline(stock)}
+                    onClick={() => {
+                      setPeriod('daily');
+                      fetchKline(stock, 'daily');
+                    }}
                   >
                     <span className="stock-code">{stock.code}</span>
                     <span className="stock-name">{stock.name}</span>
@@ -319,7 +322,10 @@ function App() {
                   <div
                     key={stock.code}
                     className={`stock-item ${selectedStock?.code === stock.code ? 'active' : ''}`}
-                    onClick={() => fetchKline(stock)}
+                    onClick={() => {
+                      setPeriod('daily');
+                      fetchKline(stock, 'daily');
+                    }}
                   >
                     <span className="stock-code">{stock.code}</span>
                     <span className="stock-name">{stock.name}</span>

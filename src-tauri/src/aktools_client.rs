@@ -29,6 +29,7 @@ impl AKToolsClient {
             base_url: format!("http://127.0.0.1:{}", port),
             client: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(30))
+                .no_proxy()
                 .build()
                 .unwrap_or_default(),
         }
