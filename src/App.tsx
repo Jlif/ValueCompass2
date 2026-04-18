@@ -1,8 +1,6 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { KlineChart } from './components/KlineChart';
-import { IndicatorPanel } from './components/IndicatorPanel';
-import { IndicatorType } from './utils/indicators';
 import { useWatchlist } from './hooks/useTauri';
 import './App.css';
 
@@ -45,7 +43,6 @@ function App() {
   const [period, setPeriod] = useState<Period>('daily');
   const [activeTab, setActiveTab] = useState<Tab>('all');
   const [watchlistCodes, setWatchlistCodes] = useState<Set<string>>(new Set());
-  const [activeIndicators, setActiveIndicators] = useState<IndicatorType[]>([]);
 
   const {
     watchlist,
@@ -187,16 +184,6 @@ function App() {
       await addToWatchlist(stock.code);
       setWatchlistCodes((prev) => new Set(prev).add(stock.code));
     }
-  };
-
-  // 切换技术指标
-  const toggleIndicator = (indicator: IndicatorType) => {
-    setActiveIndicators((prev) => {
-      if (prev.includes(indicator)) {
-        return prev.filter((i) => i !== indicator);
-      }
-      return [...prev, indicator];
-    });
   };
 
   // 动态轮询服务状态
@@ -364,12 +351,7 @@ function App() {
                 <div className="kline-wrapper">
                   <div className="kline-header">
                     <h3>K线走势</h3>
-                    <div className="kline-header-right">
-                      <IndicatorPanel
-                        activeIndicators={activeIndicators}
-                        onToggle={toggleIndicator}
-                      />
-                      <div className="period-tabs">
+                    <div className="period-tabs">
                         {(['daily', 'weekly', 'monthly'] as Period[]).map((p) => (
                           <button
                             key={p}
@@ -385,13 +367,11 @@ function App() {
                           </button>
                         ))}
                       </div>
-                    </div>
                   </div>
                   <KlineChart
                     data={klineData}
                     height={480}
                     period={period}
-                    indicators={activeIndicators}
                   />
                 </div>
               )}
