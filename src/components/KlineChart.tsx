@@ -239,11 +239,26 @@ export function KlineChart({ data, height = 400, period: _period, indicators = [
       },
       timeScale: {
         borderColor: '#334155',
-        timeVisible: true,
-        secondsVisible: false,
-        tickMarkFormatter: (time: number) => {
-          const date = new Date(time * 1000);
-          return `${date.getMonth() + 1}/${date.getDate()}`;
+        timeVisible: false,
+        tickMarkFormatter: (time: string | number) => {
+          let dateStr: string;
+          if (typeof time === 'string') {
+            dateStr = time;
+          } else {
+            const date = new Date(time * 1000);
+            dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+          }
+          const parts = dateStr.split('-');
+          if (parts.length !== 3) return dateStr;
+          const [year, month, day] = parts;
+          // 根据周期调整刻度格式
+          if (_period === 'monthly') {
+            return `${year}/${month}`;
+          }
+          if (_period === 'weekly') {
+            return `${month}/${day}`;
+          }
+          return `${month}/${day}`;
         },
       },
       autoSize: true,
