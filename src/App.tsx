@@ -38,6 +38,7 @@ function App() {
   const [selectedStock, setSelectedStock] = useState<Stock | null>(null);
   const [klineData, setKlineData] = useState<KlineData[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [klineError, setKlineError] = useState<string | null>(null);
   const [searchKeyword, setSearchKeyword] = useState('');
   const [syncing, setSyncing] = useState(false);
   const [period, setPeriod] = useState<Period>('daily');
@@ -116,6 +117,7 @@ function App() {
   // 获取 K 线数据
   const fetchKline = async (stock: Stock, targetPeriod: Period = period) => {
     setSelectedStock(stock);
+    setKlineError(null);
     try {
       const symbol = stock.exchange.toLowerCase() + stock.code;
       const endDate = new Date().toISOString().split('T')[0];
@@ -133,8 +135,13 @@ function App() {
         period: targetPeriod,
       });
       setKlineData(data);
+      if (data.length === 0) {
+        setKlineError('该周期暂无数据，请尝试其他周期');
+      }
     } catch (e) {
-      console.error('Failed to fetch kline:', e);
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('Failed to fetch kline:', msg);
+      setKlineError(`获取${PERIOD_LABELS[targetPeriod]}数据失败: ${msg}`);
       setKlineData([]);
     }
   };
@@ -345,7 +352,9 @@ function App() {
                 </button>
               </h2>
 
-              {klineData.length === 0 ? (
+              {klineError ? (
+                <div className="kline-error">{klineError}</div>
+              ) : klineData.length === 0 ? (
                 <div className="loading">暂无K线数据</div>
               ) : (
                 <div className="kline-wrapper">

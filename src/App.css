@@ -535,6 +535,16 @@ body {
   margin: 16px;
 }
 
+.kline-error {
+  padding: 40px;
+  text-align: center;
+  color: #f87171;
+  font-size: 14px;
+  background: rgba(239, 68, 68, 0.08);
+  border-radius: 8px;
+  margin: 16px;
+}
+
 .empty-state {
   display: flex;
   align-items: center;

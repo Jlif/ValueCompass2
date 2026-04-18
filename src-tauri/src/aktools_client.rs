@@ -121,23 +121,66 @@ impl AKToolsClient {
             ("adjust", adjust_param),
         ];
 
-        let response = self.client
-            .get(&url)
-            .query(&params)
-            .send()
-            .await
-            .map_err(|e| format!("Request failed: {}", e))?;
+        // 重试机制：最多重试 3 次
+        let mut last_error = String::new();
+        for attempt in 1..=3 {
+            let response = self.client
+                .get(&url)
+                .query(&params)
+                .send()
+                .await;
 
-        let status = response.status();
-        let body_text = response.text().await.unwrap_or_default();
-        println!("[aktools] get_kline response: status={}", status);
+            match response {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let body_text = resp.text().await.unwrap_or_default();
+                    println!("[aktools] get_kline response: status={} (attempt {}/3)", status, attempt);
 
-        if !status.is_success() {
-            return Err(format!("HTTP error: {}, body: {}", status, &body_text[..body_text.len().min(200)]));
+                    if status.is_success() {
+                        let data: Vec<serde_json::Value> = serde_json::from_str(&body_text)
+                            .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+                        return self.parse_kline_data(data);
+                    }
+
+                    // 非 2xx 响应，记录错误信息
+                    last_error = format!("HTTP {}: {}", status, &body_text[..body_text.len().min(500)]);
+                    println!("[aktools] get_kline error (attempt {}/3): {}", attempt, last_error);
+
+                    // 如果不是 5xx 错误，不再重试
+                    if !status.is_server_error() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    last_error = format!("Request failed: {}", e);
+                    println!("[aktools] get_kline request error (attempt {}/3): {}", attempt, last_error);
+                }
+            }
+
+            // 重试前等待
+            if attempt < 3 {
+                tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64)).await;
+            }
         }
 
-        let data: Vec<serde_json::Value> = serde_json::from_str(&body_text)
-            .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+        return Err(format!("AKTools API failed after 3 attempts: {}", last_error));
+    }
+
+    fn parse_kline_data(&self, data: Vec<serde_json::Value>) -> Result<Vec<KlineData>, String> {
+
+        if data.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // 检查返回的数据格式（可能是错误信息）
+        if let Some(first) = data.first() {
+            if first.get("error").is_some() {
+                let error_msg = first.get("error")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unknown API error");
+                return Err(format!("AKTools API error: {}", error_msg));
+            }
+        }
 
         // stock_zh_a_hist 返回中文字段名
         let klines: Vec<KlineData> = data
