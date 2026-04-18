@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { KlineChart } from './components/KlineChart';
+import { useWatchlist } from './hooks/useTauri';
 import './App.css';
 
 // 简单类型定义
@@ -23,6 +24,13 @@ interface KlineData {
 
 type Period = 'daily' | 'weekly' | 'monthly';
 type ServiceStatus = 'Stopped' | 'Starting' | 'Running' | 'Stopping' | { Failed: string };
+type Tab = 'all' | 'watchlist';
+
+const PERIOD_LABELS: Record<Period, string> = {
+  daily: '日K',
+  weekly: '周K',
+  monthly: '月K',
+};
 
 function App() {
   const [serviceStatus, setServiceStatus] = useState<ServiceStatus>('Stopped');
@@ -33,6 +41,17 @@ function App() {
   const [searchKeyword, setSearchKeyword] = useState('');
   const [syncing, setSyncing] = useState(false);
   const [period, setPeriod] = useState<Period>('daily');
+  const [activeTab, setActiveTab] = useState<Tab>('all');
+  const [watchlistCodes, setWatchlistCodes] = useState<Set<string>>(new Set());
+
+  const {
+    watchlist,
+    loading: watchlistLoading,
+    fetchWatchlist,
+    addToWatchlist,
+    removeFromWatchlist,
+    isInWatchlist,
+  } = useWatchlist();
 
   const isRunning = serviceStatus === 'Running';
   const isStarting = serviceStatus === 'Starting';
@@ -140,11 +159,45 @@ function App() {
     }
   };
 
+  // 加载自选状态到本地缓存
+  const loadWatchlistStatus = async () => {
+    const codes = new Set<string>();
+    for (const stock of stocks) {
+      const inWl = await isInWatchlist(stock.code);
+      if (inWl) codes.add(stock.code);
+    }
+    setWatchlistCodes(codes);
+  };
+
+  // 切换自选
+  const toggleWatchlist = async (stock: Stock, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const inWl = watchlistCodes.has(stock.code);
+    if (inWl) {
+      await removeFromWatchlist(stock.code);
+      setWatchlistCodes((prev) => {
+        const next = new Set(prev);
+        next.delete(stock.code);
+        return next;
+      });
+    } else {
+      await addToWatchlist(stock.code);
+      setWatchlistCodes((prev) => new Set(prev).add(stock.code));
+    }
+  };
+
   // 动态轮询服务状态
   useEffect(() => {
     fetchServiceStatus();
     fetchStocks();
   }, []);
+
+  // 股票列表变化时加载自选状态
+  useEffect(() => {
+    if (stocks.length > 0) {
+      loadWatchlistStatus();
+    }
+  }, [stocks]);
 
   // 根据服务状态调整轮询频率
   useEffect(() => {
@@ -165,9 +218,9 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>价值罗盘 - A股价值投资的好帮手</h1>
+        <h1>价值罗盘</h1>
         <div className="status-bar">
-          <span>aktools服务: </span>
+          <span>AKTools 服务:</span>
           <span className={`status-${getStatusText().toLowerCase().split(':')[0]}`}>
             {getStatusText()}
           </span>
@@ -205,22 +258,76 @@ function App() {
             </button>
           </div>
 
+          <div className="tab-bar">
+            <button
+              className={`tab ${activeTab === 'all' ? 'active' : ''}`}
+              onClick={() => setActiveTab('all')}
+            >
+              全部股票
+            </button>
+            <button
+              className={`tab ${activeTab === 'watchlist' ? 'active' : ''}`}
+              onClick={() => {
+                setActiveTab('watchlist');
+                fetchWatchlist();
+              }}
+            >
+              自选 ({watchlist.length})
+            </button>
+          </div>
+
           <div className="stock-list">
             {error && <div className="error">错误: {error}</div>}
-            {stocks.length === 0 && (
-              <div className="empty">暂无股票数据，请点击"同步股票列表"</div>
+            {activeTab === 'all' ? (
+              <>
+                {stocks.length === 0 && (
+                  <div className="empty">暂无股票数据，请点击"同步股票列表"</div>
+                )}
+                {stocks.map((stock) => (
+                  <div
+                    key={stock.code}
+                    className={`stock-item ${selectedStock?.code === stock.code ? 'active' : ''}`}
+                    onClick={() => fetchKline(stock)}
+                  >
+                    <span className="stock-code">{stock.code}</span>
+                    <span className="stock-name">{stock.name}</span>
+                    <span className="stock-exchange">{stock.exchange}</span>
+                    <button
+                      className={`watchlist-btn ${watchlistCodes.has(stock.code) ? 'in-watchlist' : ''}`}
+                      onClick={(e) => toggleWatchlist(stock, e)}
+                      title={watchlistCodes.has(stock.code) ? '移除自选' : '添加自选'}
+                    >
+                      {watchlistCodes.has(stock.code) ? '★' : '☆'}
+                    </button>
+                  </div>
+                ))}
+              </>
+            ) : (
+              <>
+                {watchlistLoading && <div className="empty">加载中...</div>}
+                {!watchlistLoading && watchlist.length === 0 && (
+                  <div className="empty">暂无自选股票，在"全部股票"中添加</div>
+                )}
+                {watchlist.map((stock) => (
+                  <div
+                    key={stock.code}
+                    className={`stock-item ${selectedStock?.code === stock.code ? 'active' : ''}`}
+                    onClick={() => fetchKline(stock)}
+                  >
+                    <span className="stock-code">{stock.code}</span>
+                    <span className="stock-name">{stock.name}</span>
+                    <span className="stock-exchange">{stock.exchange}</span>
+                    <button
+                      className="watchlist-btn in-watchlist"
+                      onClick={(e) => toggleWatchlist(stock, e)}
+                      title="移除自选"
+                    >
+                      ★
+                    </button>
+                  </div>
+                ))}
+              </>
             )}
-            {stocks.map((stock) => (
-              <div
-                key={stock.code}
-                className={`stock-item ${selectedStock?.code === stock.code ? 'active' : ''}`}
-                onClick={() => fetchKline(stock)}
-              >
-                <span className="stock-code">{stock.code}</span>
-                <span className="stock-name">{stock.name}</span>
-                <span className="stock-exchange">{stock.exchange}</span>
-              </div>
-            ))}
           </div>
         </div>
 
@@ -228,8 +335,14 @@ function App() {
           {selectedStock ? (
             <div className="stock-detail">
               <h2>
-                {selectedStock.name} ({selectedStock.code})
-                <span className="exchange">{selectedStock.exchange}</span>
+                {selectedStock.name}
+                <span className="exchange">{selectedStock.code} · {selectedStock.exchange}</span>
+                <button
+                  className={`watchlist-btn-large ${watchlistCodes.has(selectedStock.code) ? 'in-watchlist' : ''}`}
+                  onClick={(e) => toggleWatchlist(selectedStock, e)}
+                >
+                  {watchlistCodes.has(selectedStock.code) ? '★ 已自选' : '☆ 加自选'}
+                </button>
               </h2>
 
               {klineData.length === 0 ? (
@@ -250,12 +363,12 @@ function App() {
                             }
                           }}
                         >
-                          {p === 'daily' ? '日K' : p === 'weekly' ? '周K' : '月K'}
+                          {PERIOD_LABELS[p]}
                         </button>
                       ))}
                     </div>
                   </div>
-                  <KlineChart data={klineData} height={450} period={period} />
+                  <KlineChart data={klineData} height={480} period={period} />
                 </div>
               )}
             </div>
